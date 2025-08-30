@@ -1,0 +1,70 @@
+const Team = require('../models/Team');
+const mongoose = require('mongoose');
+const ScoreAudit = require('../models/ScoreAudit');
+
+exports.getDashboard = async (req, res) => {
+  const teams = await Team.find().populate('teamHead', 'name email').lean();
+  res.json({ teams });
+};
+
+// core scoring: managers/admins can give one score; average recalculated
+exports.assignScore = async (req, res) => {
+  try {
+    const { teamId, score } = req.body;
+    const userId = req.user.id;
+    const role = req.user.role;
+    if (!teamId || score === undefined) return res.status(400).json({ message: 'Missing fields' });
+    const s = Number(score);
+    if (isNaN(s) || s < 0 || s > 100) return res.status(400).json({ message: 'Score must be 0-100' });
+    const team = await Team.findById(teamId);
+    if (!team) return res.status(404).json({ message: 'Team not found' });
+    const oldScores = JSON.parse(JSON.stringify(team.scores || []));
+    // find existing score by this judge
+    const existing = team.scores.find(x => x.judge && x.judge.toString() === userId.toString());
+    if (existing) {
+      existing.score = s;
+      existing.updatedAt = new Date();
+    } else {
+      team.scores.push({ judge: userId, score: s, updatedAt: new Date() });
+    }
+    // compute average
+    const avg = team.scores.reduce((acc, j) => acc + (j.score || 0), 0) / (team.scores.length || 1);
+    team.totalScore = Math.round(avg * 100) / 100;
+    await team.save();
+    await ScoreAudit.create({ team: team._id, oldScores, newScores: team.scores, changedBy: mongoose.Types.ObjectId(userId), role });
+    res.json({ message: 'Score assigned', team });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// endpoint to compute qualifiers after round 1
+exports.computeQualifiers = async (req, res) => {
+  try {
+    // top 2 per category
+    const categories = await Team.distinct('category');
+    let qualifiedIds = [];
+    for (const cat of categories) {
+      const top = await Team.find({ category: cat }).sort({ totalScore: -1 }).limit(2).lean();
+      top.forEach(t => qualifiedIds.push(t._id.toString()));
+      // mark qualified
+      await Team.updateMany({ _id: { $in: top.map(t => t._id) } }, { $set: { qualified: true, round: 2 } });
+    }
+    res.json({ message: 'Qualifiers computed', qualifiedCount: qualifiedIds.length });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// compute winners for round 2 (top 3 overall among qualified)
+exports.computeWinners = async (req, res) => {
+  try {
+    const winners = await Team.find({ round: 2 }).sort({ totalScore: -1 }).limit(3).lean();
+    res.json({ winners });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message });
+  }
+};

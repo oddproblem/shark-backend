@@ -1,0 +1,23 @@
+# Render configuration for Event Platform Backend
+services:
+  - type: web
+    name: event-platform-backend
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: MONGO_URI
+        fromSecret: MONGO_URI
+      - key: JWT_SECRET
+        fromSecret: JWT_SECRET
+      - key: REACT_APP_API_BASE_URL
+        fromSecret: REACT_APP_API_BASE_URL
+      - key: ADMIN_SEED
+        fromSecret: ADMIN_SEED
+      - key: EVENTMANAGER_SEED
+        fromSecret: EVENTMANAGER_SEED
